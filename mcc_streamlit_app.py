@@ -32,35 +32,22 @@ if st.button("Convert and map", type="primary", disabled=pdf_file is None):
         st.stop()
     st.write(f"{len(lookup)} reference institutes loaded.")
 
-    # 2. Parse the PDF page by page with a progress bar
-    records, layout = [], None
+    # 2. Parse the PDF in parallel (all CPU cores) with a progress bar
+    import os, tempfile
     bar = st.progress(0.0, text="Starting...")
-    with pdfplumber.open(io.BytesIO(pdf_file.getvalue())) as pdf:
-        latest_label = m.detect_latest_round_label(pdf)
-        total = len(pdf.pages)
-        for idx in range(int(skip_pages), total):
-            page = pdf.pages[idx]
-            try:
-                tables = page.extract_tables()
-            except Exception:
-                tables = []
-            for t in tables:
-                for row in t:
-                    if row is None or len(row) < 8 or not m.is_row_start(row[0]):
-                        continue
-                    ncols = len(row)
-                    if layout is None:
-                        layout = "simple" if ncols == 8 else "dual"
-                    if ncols == 8:
-                        inst = row[3]
-                        other = " | ".join(m.clean_cell(x) for x in row[4:] if x not in (None, ""))
-                    else:
-                        inst = row[-6]
-                        other = " | ".join(m.clean_cell(x) for x in row[-5:] if x not in (None, ""))
-                    records.append({"id": m.clean_cell(row[0]), "institute": m.clean_cell(inst), "other": other})
-            page.flush_cache()
-            if (idx + 1) % 10 == 0 or idx + 1 == total:
-                bar.progress((idx + 1) / total, text=f"Parsing page {idx + 1}/{total}")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp.write(pdf_file.getvalue())
+    tmp.close()
+    try:
+        with pdfplumber.open(tmp.name) as pdf:
+            latest_label = m.detect_latest_round_label(pdf)
+        records, layout = m.parse_records_parallel(
+            tmp.name,
+            skip_pages=int(skip_pages),
+            progress_cb=lambda d, t: bar.progress(min(d / t, 1.0), text=f"Parsing ~{d}/{t} pages"),
+        )
+    finally:
+        os.remove(tmp.name)
     layout = layout or "simple"
     bar.progress(1.0, text="Parsing done. Mapping...")
 
