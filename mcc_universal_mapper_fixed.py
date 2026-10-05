@@ -215,13 +215,16 @@ def parse_records(pdf, skip_pages=2, progress_every=200):
                 if layout is None:
                     layout = "simple" if ncols == 8 else "dual"
                 if ncols == 8:
+                    quota = row[2]
                     inst = row[3]
                     other = " | ".join(clean_cell(x) for x in row[4:] if x not in (None, ""))
                 else:
+                    quota = row[-7]
                     inst = row[-6]
                     other = " | ".join(clean_cell(x) for x in row[-5:] if x not in (None, ""))
                 records.append({
                     "id": clean_cell(row[0]),
+                    "quota": clean_cell(quota),
                     "institute": clean_cell(inst),
                     "other": other,
                 })
@@ -287,12 +290,15 @@ def _record_from_row(row):
         return None, None
     ncols = len(row)
     if ncols == 8:
+        quota = row[2]
         inst = row[3]
         other = " | ".join(clean_cell(x) for x in row[4:] if x not in (None, ""))
     else:
+        quota = row[-7]          # latest round's Allotted Quota sits right before its Institute
         inst = row[-6]
         other = " | ".join(clean_cell(x) for x in row[-5:] if x not in (None, ""))
-    return {"id": clean_cell(row[0]), "institute": clean_cell(inst), "other": other}, ncols
+    return {"id": clean_cell(row[0]), "quota": clean_cell(quota),
+            "institute": clean_cell(inst), "other": other}, ncols
 
 
 # --------------------------------------------------------------------------
@@ -445,7 +451,7 @@ def build_output_rows(records, lookup, layout):
         mapped = mapped or {"Code": "", "State": "", "Institute Type": "", "Institute Name": ""}
 
         out_rows.append([
-            rec["id"], inst, rec["other"],
+            rec["id"], rec.get("quota", ""), inst, rec["other"],
             mapped["Code"], mapped["State"], mapped["Institute Type"], mapped["Institute Name"], status,
         ])
     stats = {
@@ -581,7 +587,8 @@ def main():
         other_label = f"[{latest_tag}] Course / Category / Remarks (reference only)"
         sheet_title = f"{latest_tag} Allotment Data"
 
-    headers = ["Rank", inst_label, other_label, "Code", "State", "Institute Type", "Institute Name", "Match Status"]
+    quota_label = "Allotted Quota" if layout == "simple" else f"[{latest_tag}] Allotted Quota"
+    headers = ["Rank", quota_label, inst_label, other_label, "Code", "State", "Institute Type", "Institute Name", "Match Status"]
 
     unmatched_institutes = OrderedDict()
     status_idx = headers.index("Match Status")
