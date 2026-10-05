@@ -53,16 +53,7 @@ if st.button("Convert and map", type="primary", disabled=pdf_file is None):
 
     # 3. Map and build the workbook
     out_rows, stats = m.build_output_rows(records, lookup, layout)
-    if layout == "simple":
-        inst_label = "Allotted Institute"
-        other_label = "Course / Category / Remarks (reference only)"
-        sheet_title = "Allotment Data"
-    else:
-        tag = latest_label or "Latest Round"
-        inst_label = f"[{tag}] Allotted Institute"
-        other_label = f"[{tag}] Course / Category / Remarks (reference only)"
-        sheet_title = f"{tag} Allotment Data"
-    headers = ["Rank", inst_label, other_label, "Code", "State", "Institute Type", "Institute Name", "Match Status"]
+    headers, inst_label, sheet_title = m.build_headers(layout, latest_label)
 
     unmatched = OrderedDict()
     si, ii = headers.index("Match Status"), headers.index(inst_label)

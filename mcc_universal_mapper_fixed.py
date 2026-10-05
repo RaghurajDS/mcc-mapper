@@ -215,16 +215,14 @@ def parse_records(pdf, skip_pages=2, progress_every=200):
                 if layout is None:
                     layout = "simple" if ncols == 8 else "dual"
                 if ncols == 8:
-                    quota = row[2]
                     inst = row[3]
                     other = " | ".join(clean_cell(x) for x in row[4:] if x not in (None, ""))
                 else:
-                    quota = row[-7]
                     inst = row[-6]
                     other = " | ".join(clean_cell(x) for x in row[-5:] if x not in (None, ""))
                 records.append({
                     "id": clean_cell(row[0]),
-                    "quota": clean_cell(quota),
+                    "quota": clean_cell(row[-7]) if ncols != 8 else "",
                     "institute": clean_cell(inst),
                     "other": other,
                 })
@@ -290,15 +288,13 @@ def _record_from_row(row):
         return None, None
     ncols = len(row)
     if ncols == 8:
-        quota = row[2]
         inst = row[3]
         other = " | ".join(clean_cell(x) for x in row[4:] if x not in (None, ""))
     else:
-        quota = row[-7]          # latest round's Allotted Quota sits right before its Institute
         inst = row[-6]
         other = " | ".join(clean_cell(x) for x in row[-5:] if x not in (None, ""))
-    return {"id": clean_cell(row[0]), "quota": clean_cell(quota),
-            "institute": clean_cell(inst), "other": other}, ncols
+    quota = clean_cell(row[-7]) if ncols != 8 else ""
+    return {"id": clean_cell(row[0]), "quota": quota, "institute": clean_cell(inst), "other": other}, ncols
 
 
 # --------------------------------------------------------------------------
@@ -450,10 +446,11 @@ def build_output_rows(records, lookup, layout):
 
         mapped = mapped or {"Code": "", "State": "", "Institute Type": "", "Institute Name": ""}
 
-        out_rows.append([
-            rec["id"], rec.get("quota", ""), inst, rec["other"],
-            mapped["Code"], mapped["State"], mapped["Institute Type"], mapped["Institute Name"], status,
-        ])
+        tail = [mapped["Code"], mapped["State"], mapped["Institute Type"], mapped["Institute Name"], status]
+        if layout == "dual":
+            out_rows.append([rec["id"], rec.get("quota", ""), inst, rec["other"]] + tail)
+        else:
+            out_rows.append([rec["id"], inst, rec["other"]] + tail)
     stats = {
         "total": len(records), "matched": matched, "matched_direct": matched_direct,
         "matched_stripped": matched_stripped, "applicable": applicable,
@@ -464,6 +461,20 @@ def build_output_rows(records, lookup, layout):
 # --------------------------------------------------------------------------
 # Writing the workbook
 # --------------------------------------------------------------------------
+def build_headers(layout, latest_label=None):
+    """Returns (headers, institute_header, sheet_title) for the output workbook."""
+    tail = ["Code", "State", "Institute Type", "Institute Name", "Match Status"]
+    if layout == "simple":
+        inst_label = "Allotted Institute"
+        other_label = "Course / Category / Remarks (reference only)"
+        return ["Rank", inst_label, other_label] + tail, inst_label, "Allotment Data"
+    tag = latest_label or "Latest Round"
+    inst_label = f"[{tag}] Allotted Institute"
+    other_label = f"[{tag}] Course / Category / Remarks (reference only)"
+    quota_label = f"[{tag}] Allotted Quota"
+    return ["Rank", quota_label, inst_label, other_label] + tail, inst_label, f"{tag} Allotment Data"
+
+
 def write_output_workbook(headers, out_rows, stats, out_path, sheet_title, unmatched_institutes=None):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -566,29 +577,18 @@ def main():
     print(f"Opening PDF {args.input_pdf} ...", file=sys.stderr)
     with pdfplumber.open(args.input_pdf) as pdf:
         latest_label = detect_latest_round_label(pdf)
-        print("Parsing PDF (uses the PDF's own table structure -- works for any round) ...", file=sys.stderr)
-        def _cb(d, t):
-            if d % 200 < 40 or d == t:
-                print(f"  ...parsed ~{d}/{t} pages", file=sys.stderr, flush=True)
-        records, layout = parse_records_parallel(args.input_pdf, skip_pages=args.skip_pages, progress_cb=_cb)
-        print(f"  Detected layout: {layout}" + (f" (latest = {latest_label})" if layout == "dual" else ""),
-              file=sys.stderr)
-        print(f"  {len(records)} rows extracted.", file=sys.stderr)
+    print("Parsing PDF (uses the PDF's own table structure -- works for any round) ...", file=sys.stderr)
+
+    def _cb(d, t):
+        if d % 200 < 40 or d == t:
+            print(f"  ...parsed ~{d}/{t} pages", file=sys.stderr, flush=True)
+    records, layout = parse_records_parallel(args.input_pdf, skip_pages=args.skip_pages, progress_cb=_cb)
+    print(f"  Detected layout: {layout}" + (f" (latest = {latest_label})" if layout == "dual" else ""),
+          file=sys.stderr)
+    print(f"  {len(records)} rows extracted.", file=sys.stderr)
 
     out_rows, stats = build_output_rows(records, lookup, layout)
-
-    if layout == "simple":
-        inst_label = "Allotted Institute"
-        other_label = "Course / Category / Remarks (reference only)"
-        sheet_title = "Allotment Data"
-    else:
-        latest_tag = latest_label or "Latest Round"
-        inst_label = f"[{latest_tag}] Allotted Institute"
-        other_label = f"[{latest_tag}] Course / Category / Remarks (reference only)"
-        sheet_title = f"{latest_tag} Allotment Data"
-
-    quota_label = "Allotted Quota" if layout == "simple" else f"[{latest_tag}] Allotted Quota"
-    headers = ["Rank", quota_label, inst_label, other_label, "Code", "State", "Institute Type", "Institute Name", "Match Status"]
+    headers, inst_label, sheet_title = build_headers(layout, latest_label)
 
     unmatched_institutes = OrderedDict()
     status_idx = headers.index("Match Status")
